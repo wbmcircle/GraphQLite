@@ -10,7 +10,7 @@
   "homepage": "https://graphqlite.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/relatedcode/GraphQLite.git"
+    "url": "https://github.com/wbmcircle/GraphQLite.git"
   },
   "scripts": {
     "build": "tsc"

@@ -7,7 +7,7 @@ Pod::Spec.new do |s|
   s.homepage = 'https://relatedcode.com'
   s.author = { 'Related Code' => 'info@relatedcode.com' }
 
-  s.source = { :git => 'https://github.com/relatedcode/GraphQLite.git', :tag => s.version }
+  s.source = { :git => 'https://github.com/wbmcircle/GraphQLite.git', :tag => s.version }
   s.source_files = 'ios-sdk/Sources/**/*.swift'
 
   s.pod_target_xcconfig = { 'SWIFT_VERSION' => '5.0' }
