@@ -22,6 +22,7 @@ import { Op } from "sequelize";
 import url from "url";
 import { withFilter } from "utils/with-filter";
 import { WebSocketServer } from "ws";
+import messagesRouter from "routes/messages";
 
 export let serverErrors: string[] = [];
 
@@ -66,6 +67,8 @@ createBuckets();
 const dateSchema = createDateSchema();
 const dateResolver = createDateResolver();
 
+console.log(mergedResolvers);
+
 const resolvers = merge(mergedResolvers, dateResolver);
 const typeDefs = [exportedSchema, dateSchema];
 
@@ -84,14 +87,18 @@ app.disable("x-powered-by");
 app.use(
   fileUpload({
     limits: {
-      fileSize: 50 * 1024 * 1024 * 1024, // 50 MB max file(s) size
+      fileSize: 100 * 1024 * 1024 * 1024, // 50 MB max file(s) size
     },
   })
 );
 
 app.set("json spaces", 2);
-app.use(cors({ origin: "*", methods: "GET,POST,HEAD,OPTIONS,DELETE" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(cors({
+  origin: "*",
+  methods: "GET,POST,HEAD,OPTIONS,DELETE",
+  credentials: true
+}));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use(express.json());
 
 app.get(
@@ -110,6 +117,7 @@ app.get(
 app.use("/auth", authRouter);
 app.use("/storage", storageRouter);
 app.use("/admin", adminRouter);
+app.use("/api", messagesRouter);
 
 app.use(
   "/graphql",
@@ -119,6 +127,8 @@ app.use(
     graphiql: false,
   })
 );
+
+app.use(express.static(path.join(__dirname, '../public')));
 
 app.use(
   (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -151,7 +161,7 @@ app.use(
 const PORT = 4000;
 
 const server = app.listen(PORT, () => {
-  console.log(`🚀 REST API running on http://localhost:${PORT}`);
+  console.log(`🚀 -----REST API running on http://localhost:${PORT}`);
   console.log(`🚀 GraphQL Server running on http://localhost:${PORT}/graphql`);
   console.log(`🚀 WebSockets listening on ws://localhost:${PORT}/graphql`);
   const wsServer = new WebSocketServer({

@@ -1,12 +1,87 @@
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 import AWS from "aws-sdk";
+import axios from "axios";
 import express from "express";
+import ffmpeg from "fluent-ffmpeg";
+import fs from "fs";
+import path from "path";
 import { getHeadObject } from "utils/get-head";
 import randomId from "utils/random-id";
 
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
+let downloadFile = async (fileUrl: any, outputLocationPath: any) => {
+  const writer = fs.createWriteStream(outputLocationPath);
+
+  return axios({
+    method: 'get',
+    url: fileUrl,
+    responseType: 'stream',
+  }).then(response => {
+
+    //ensure that the user can call `then()` only when the file has
+    //been downloaded entirely.
+
+    return new Promise((resolve, reject) => {
+      response.data.pipe(writer);
+      let error: any = null;
+      writer.on('error', err => {
+        error = err;
+        writer.close();
+        reject(err);
+      });
+      writer.on('close', () => {
+        if (!error) {
+          resolve(true);
+        }
+        //no need to call the reject here, as it will have been called in the
+        //'error' stream;
+      });
+    });
+  });
+}
+
+let convert_video = async (inputPath: any, outputPath: any) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .output(outputPath)
+      .format('mp4') // Specify the output format as mp4
+      .videoCodec('libx264')
+      .on('end', () => {
+        console.log('Conversion finished successfully.');
+        resolve(true);
+      })
+      .on('error', (err) => {
+        console.error('Error during conversion:', err.message);
+        reject(err);
+      })
+      .run();
+  });
+}
+
+let convert_audio = async (inputPath: any, outputPath: any) => {
+  console.log('inputPath', inputPath)
+  console.log('outputPath', outputPath)
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .output(outputPath)
+      .toFormat('mp3')
+      .on('end', () => {
+        console.log('Audio conversion finished successfully.');
+        resolve(true);
+      })
+      .on('error', (err) => {
+        console.log('Error during conversion:', err.message);
+        reject(err);
+      })
+      .run();
+  });
+}
+
 export const s3 = new AWS.S3({
-  accessKeyId: process.env.MINIO_ROOT_USER || "minio",
-  secretAccessKey: process.env.MINIO_ROOT_PASSWORD || "minio123",
-  endpoint: "http://minio:9000",
+  accessKeyId: process.env.MINIO_ROOT_USER || "minioadmin",
+  secretAccessKey: process.env.MINIO_ROOT_PASSWORD || "minioadmin",
+  endpoint: "http://localhost:9000",
   s3ForcePathStyle: true,
   signatureVersion: "v4",
 });
@@ -72,11 +147,14 @@ export const uploadObject = async (
   next: express.NextFunction
 ) => {
   try {
+
     const { name } = req.params;
     const { key } = req.body;
 
     if (!req.files) throw new Error("No files were uploaded.");
     const file = req.files.file as any;
+
+    console.log('file name', file.name, file.mimetype)
 
     const fileToken = randomId(100);
 
@@ -92,11 +170,82 @@ export const uploadObject = async (
       })
       .promise();
 
-    res.locals.data = {
-      url: `/storage/b/${name}/o/${encodeURIComponent(key)}?token=${fileToken}`,
-    };
+    if (file.name.endsWith('.m4a') || file.name.endsWith('.MOV')) {
+      try {
+
+        await downloadFile(`http://localhost:4000/storage/b/${name}/o/${encodeURIComponent(key)}?token=${fileToken}`, `${path.resolve(__dirname, "../../public")}/${file.name}`)
+
+        let new_key = `${new Date().getTime()}`;
+        const inputPath = `${path.resolve(__dirname, "../../public")}/${file.name}`;
+        if (file.name.endsWith('.m4a')) {
+          const outputPath = `${path.resolve(__dirname, "../../public")}/${new_key}.mp3`;
+          await convert_audio(inputPath, outputPath)
+  
+          const readableStream = fs.createReadStream(outputPath)
+          await s3
+            .upload({
+              Bucket: name,
+              Key: `${new_key}.mp3`,
+              Body: readableStream,
+              ContentType: 'audio/mpeg',
+              Metadata: {
+                token: fileToken,
+              },
+            })
+            .promise();
+  
+          res.locals.data = {
+            url: `/storage/b/${name}/o/${encodeURIComponent(`${new_key}.mp3`)}?token=${fileToken}`,
+          };
+        } else {
+          const outputPath = `${path.resolve(__dirname, "../../public")}/${new_key}.pm4`;
+          await convert_video(inputPath, outputPath)
+  
+          const readableStream = fs.createReadStream(outputPath)
+          await s3
+            .upload({
+              Bucket: name,
+              Key: `${new_key}.mp4`,
+              Body: readableStream,
+              ContentType: 'video/mp4',
+              Metadata: {
+                token: fileToken,
+              },
+            })
+            .promise();
+  
+          res.locals.data = {
+            url: `/storage/b/${name}/o/${encodeURIComponent(`${new_key}.mp4`)}?token=${fileToken}`,
+          };
+        }
+      }
+      catch (err) {
+        console.log('converting error', err);
+        res.locals.data = {
+          url: `/storage/b/${name}/o/${encodeURIComponent(key)}?token=${fileToken}`,
+        };
+      }
+    } else {
+      res.locals.data = {
+        url: `/storage/b/${name}/o/${encodeURIComponent(key)}?token=${fileToken}`,
+      };
+    }
+
     return next("router");
+
+    // const destFolder = './public/';
+
+    // await file.mv(destFolder + file.name, function(err) {
+    //   if (err)
+    //     return res.status(500).send(err);
+
+    //   res.locals.data = {
+    //     url: `/${file.name}`,
+    //   };
+    //   return next("router");
+    // });
   } catch (err) {
+    console.log('err', err)
     return next(err);
   }
 };
@@ -128,11 +277,13 @@ export const getObject = async (
       request.abort();
     });
 
+    const downloadName = req.query.d && typeof req.query.d === "string" ? req.query.d : key;
+    const headerValue: string = `attachment; filename="${encodeURIComponent(downloadName)}"`;
     // Add the content type to the response (it's not propagated from the S3 SDK)
     res.set("Content-Type", headObject.ContentType);
     res.set("Content-Length", headObject.ContentLength?.toString());
     res.set("Last-Modified", headObject.LastModified?.toUTCString());
-    res.set("Content-Disposition", `inline;`);
+    res.set("Content-Disposition", headerValue);
     res.set("Cache-Control", "private,max-age=31557600");
     res.set("ETag", headObject.ETag);
 
@@ -180,11 +331,11 @@ export const listObjects = async (
     res.locals.data = {
       data: objects.Contents
         ? await Promise.all(
-            objects.Contents.map(async (o) => ({
-              ...o,
-              Head: await getHeadObject(s3, name, o.Key as string),
-            }))
-          )
+          objects.Contents.map(async (o) => ({
+            ...o,
+            Head: await getHeadObject(s3, name, o.Key as string),
+          }))
+        )
         : [],
     };
     return next("router");
@@ -192,3 +343,4 @@ export const listObjects = async (
     return next(err);
   }
 };
+

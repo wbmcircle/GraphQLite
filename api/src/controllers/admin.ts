@@ -385,7 +385,7 @@ export const exportSchema = async (
 
     // Retrieve and build the schema
     Object.keys(database.models)
-      .filter((s) => !["gql_users", "gql_admins"].includes(s))
+      .filter((s) => !["gql_users", "gql_admins", "users", "channels"].includes(s))
       .forEach((modelName: string) => {
         const model = database.models[modelName];
         schemas.push({
